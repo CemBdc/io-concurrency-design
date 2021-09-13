@@ -14,6 +14,7 @@ func failOnError(err error, msg string) {
 }
 
 //badWay took 1.353974541s
+//goodWay took 999.654625ms
 func elapsed(what string) func() {
 	start := time.Now()
 	return func() {

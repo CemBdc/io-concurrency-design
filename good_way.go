@@ -7,9 +7,10 @@ import (
 	"sync"
 )
 
-func getUserList(c chan<- UserData, wg *sync.WaitGroup) {
-	defer close(c)
-	defer wg.Done()
+var userChan = make(chan UserData, 20)
+var todoChan = make(chan UserTodoData, 20)
+
+func getUserList(wg *sync.WaitGroup) {
 
 	url := "https://gorest.co.in/public/v1/users"
 
@@ -26,13 +27,15 @@ func getUserList(c chan<- UserData, wg *sync.WaitGroup) {
 	failOnError(err, "Error on parsing response")
 
 	for _, v := range users.Data {
-		c <- v
+		userChan <- v
 	}
+
+	wg.Done()
+
+	close(userChan)
 }
 
-func getUserTodoList(c chan<- UserTodoData, wg *sync.WaitGroup) {
-	defer close(c)
-	defer wg.Done()
+func getUserTodoList(wg *sync.WaitGroup) {
 
 	url := "https://gorest.co.in/public/v1/todos"
 
@@ -48,59 +51,50 @@ func getUserTodoList(c chan<- UserTodoData, wg *sync.WaitGroup) {
 	failOnError(err, "Error on parsing response")
 
 	for _, v := range todo.Data {
-		c <- v
+		todoChan <- v
 	}
+
+	wg.Done()
+
+	close(todoChan)
 }
 
-func userToConsole(user <-chan UserData) {
+func userToConsole(u UserData, wg *sync.WaitGroup) {
 
-	for {
-		u := <-user
-		fmt.Printf("Id: %d, Name: %s, Email: %s\n", u.Id, u.Name, u.Email)
-	}
+	fmt.Printf("Id: %d, Name: %s, Email: %s\n", u.Id, u.Name, u.Email)
+
+	wg.Done()
+
 }
 
-func userToFile(user <-chan UserData, file *os.File) {
+func userToFile(u UserData, file *os.File, wg *sync.WaitGroup) {
 
-	for {
-		u := <-user
-		fmt.Fprintf(file, "Id: %d, Name: %s, Email: %s\n", u.Id, u.Name, u.Email)
-	}
+	fmt.Fprintf(file, "Id: %d, Name: %s, Email: %s\n", u.Id, u.Name, u.Email)
+
+	wg.Done()
+
 }
 
-func todoConsole(todo <-chan UserTodoData) {
+func todoConsole(t UserTodoData, wg *sync.WaitGroup) {
 
-	for {
-		t := <-todo
-		fmt.Printf("Id: %d, UserId: %d, Title: %s\n", t.Id, t.UserId, t.Title)
-	}
+	fmt.Printf("Id: %d, UserId: %d, Title: %s\n", t.Id, t.UserId, t.Title)
+
+	wg.Done()
+
 }
 
-func todoToFile(todo <-chan UserTodoData, file *os.File) {
+func todoToFile(t UserTodoData, file *os.File, wg *sync.WaitGroup) {
 
-	for {
-		t := <-todo
-		fmt.Fprintf(file, "Id: %d, UserId: %d, Title: %s\n", t.Id, t.UserId, t.Title)
-	}
+	fmt.Fprintf(file, "Id: %d, UserId: %d, Title: %s\n", t.Id, t.UserId, t.Title)
+
+	wg.Done()
+
 }
 
 func doItGoodway() {
 	defer elapsed("goodWay")()
 
 	var wg sync.WaitGroup
-	userDataChan := make(chan UserData, 20)
-	userFileChan := make(chan UserData, 20)
-	userConsoleChan := make(chan UserData, 20)
-
-	userTodoDataChan := make(chan UserTodoData, 20)
-	userTodoDataFileChan := make(chan UserTodoData, 20)
-	userTodoDataConsoleChan := make(chan UserTodoData, 20)
-
-	wg.Add(1)
-	go getUserList(userDataChan, &wg)
-
-	wg.Add(1)
-	go getUserTodoList(userTodoDataChan, &wg)
 
 	userFile, err := os.Create("users.txt")
 	failOnError(err, "Error on creating users.txt")
@@ -110,37 +104,39 @@ func doItGoodway() {
 	failOnError(err, "Error on creating users.txt")
 	defer todoFile.Close()
 
-	go userToFile(userFileChan, userFile)
-	go userToConsole(userConsoleChan)
-
-	go todoToFile(userTodoDataFileChan, todoFile)
-	go todoConsole(userTodoDataConsoleChan)
-
-	wg.Wait()
-
 	userOpen := true
 	todoOpen := true
 
+	wg.Add(2)
+	go getUserList(&wg)
+	go getUserTodoList(&wg)
+
 	for userOpen || todoOpen {
 		select {
-		case user, open := <-userDataChan:
+		case user, open := <-userChan:
 
 			if open {
-				userFileChan <- user
-				userConsoleChan <- user
+				wg.Add(2)
+				go userToFile(user, userFile, &wg)
+				go userToConsole(user, &wg)
 			} else {
 				userOpen = false
 			}
 
-		case todo, open := <-userTodoDataChan:
+		case todo, open := <-todoChan:
 
 			if open {
-				userTodoDataFileChan <- todo
-				userTodoDataConsoleChan <- todo
+				wg.Add(2)
+				go todoToFile(todo, todoFile, &wg)
+				go todoConsole(todo, &wg)
 			} else {
 				todoOpen = false
 			}
 		}
 	}
+
+	fmt.Println("All spawned now waiting....")
+	wg.Wait()
+	fmt.Println("All done....")
 
 }
